@@ -2,7 +2,7 @@
 
 A lightweight, tablet-friendly Point of Sale system for small businesses. Built with vanilla HTML/CSS/JS on the frontend, Node.js + Express on the backend, and Supabase (Postgres) as the database.
 
-**🌐 Live demo:** [mannas-tinadhan-pos.onrender.com](https://mannas-tinadhan-pos.onrender.com/)
+**🌐 Live demo:** (not currently hosted) — to host the frontend as a static site use GitHub Pages or any static host.
 
 ---
 
@@ -113,30 +113,26 @@ Go to **http://localhost:3000** in your browser or tablet.
 
 ---
 
-## ☁️ Deploying on Render
+## ☁️ Deployment
 
-[#-deploying-on-render](#-deploying-on-render)
+Frontend only: you can publish `index.html` as a static site (for example on GitHub Pages) to get a github.io URL. That serves the UI but does not run the backend API.
 
-This app is currently deployed at **<https://mannas-tinadhan-pos.onrender.com/>** as a Render **Web Service**.
+Backend: `server.js` is a Node/Express server that requires the Supabase service role key. Keep the backend hosted on a server or platform that supports environment variables (e.g., Railway, Heroku, Fly, or a VPS). Do NOT expose the service role key in frontend code — it must remain in server-side environment variables.
 
-**Settings used:**
+Recommended approach to get a `github.io` frontend:
+- Push the repo to GitHub and enable GitHub Pages for the repository (use the `gh-pages` branch or the `main` branch `/docs` folder).
+- Optionally, point the frontend to a separate hosted backend by setting `const API = 'https://your-backend.example.com'` in `index.html` or by proxying requests.
 
-| Setting        | Value           |
-| -------------- | --------------- |
-| Build Command  | `npm install`   |
-| Start Command  | `node server.js` (or `npm start`) |
-| Environment    | Node            |
+Note: After publishing to GitHub Pages, edit `index.html` and set the `API` constant near the top to your backend URL, for example:
 
-Render sets the `PORT` environment variable automatically, and `server.js` already reads `process.env.PORT`, so no extra config is needed there.
+```html
+<!-- in index.html -->
+const API = 'https://your-backend.example.com';
+```
 
-**Required environment variables** (set these in Render → your service → Environment):
+If your backend is not yet hosted, the app will try to call same-origin APIs on the github.io domain and will fail; let me know the backend URL and I can set this for you.
 
-| Key | Value |
-| --- | --- |
-| `SUPABASE_URL` | Your Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Your Supabase service role key |
-
-Since the database now lives in Supabase (hosted Postgres) rather than a local file, Render's ephemeral filesystem is no longer a concern — sales, restocks, and inventory changes persist across redeploys and restarts.
+If you want, I can add a simple GitHub Pages deployment guide or create a GitHub Actions workflow to build/publish the frontend.
 
 ---
 
