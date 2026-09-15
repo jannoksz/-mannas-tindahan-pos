@@ -623,6 +623,7 @@ let cart        = [];
 let lastReceipt = null;
 let currentRole = '';
 let currentUser = '';
+let productsRefreshTimer = null;
 
 // Sortable table state
 let sortCol = 'Name';
@@ -1397,9 +1398,17 @@ function login(role) {
   }
 
   loadProducts();
+  startProductsRefresh();
 }
 
 function logout() { location.reload(); }
+
+function startProductsRefresh() {
+  if (productsRefreshTimer) clearInterval(productsRefreshTimer);
+  productsRefreshTimer = setInterval(() => {
+    if (currentRole && !document.hidden) loadProducts();
+  }, 5000);
+}
 </script>
 </body>
 </html>

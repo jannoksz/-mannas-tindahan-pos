@@ -2,6 +2,7 @@ const path = require('path');
 const XLSX = require('xlsx');
 
 const workbookPath = path.join(__dirname, 'pos_database.xlsx');
+let writeQueue = Promise.resolve();
 const tableSheets = {
   products: 'Products',
   sales: 'Sales',
@@ -129,7 +130,8 @@ class LocalQuery {
   }
 
   async execute() {
-    try {
+    const run = async () => {
+      try {
       const { database, workbook } = readDatabase();
       const rows = database[this.table];
       if (!rows) throw new Error(`Unknown table: ${this.table}`);
@@ -199,9 +201,15 @@ class LocalQuery {
         saveDatabase(database, workbook);
         return { data: null, error: null };
       }
-    } catch (error) {
-      return { data: null, error };
-    }
+      } catch (error) {
+        return { data: null, error };
+      }
+    };
+
+    if (this.operation === 'select') return run();
+
+    writeQueue = writeQueue.then(run, run);
+    return writeQueue;
   }
 }
 
