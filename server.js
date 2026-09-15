@@ -1,32 +1,16 @@
 /**
- * Manna's Tinadhan POS — server.js  (v3 — Supabase backend)
- * Install:  npm install express cors body-parser @supabase/supabase-js dotenv
- * Env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  (see .env.example)
+ * Manna's Tinadhan POS — server.js  (Microsoft Excel backend)
+ * Install:  npm install
  * Run:      node server.js
  */
-
-require('dotenv').config();
 
 const express    = require('express');
 const cors       = require('cors');
 const bodyParser = require('body-parser');
-const { createClient } = require('@supabase/supabase-js');
+const localDb   = require('./local-db');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
-
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  console.error('❌  Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables.');
-  console.error('    Copy .env.example to .env and fill in your Supabase project credentials.');
-  process.exit(1);
-}
-
-// Service-role key: server-side only, full read/write, bypasses RLS.
-// NEVER send this key to the browser/frontend.
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -46,7 +30,7 @@ const SKU_PREFIX = {
 
 async function generateSKU(category) {
   const prefix = SKU_PREFIX[category] || 'GEN';
-  const { count, error } = await supabase
+  const { count, error } = await localDb
     .from('products')
     .select('*', { count: 'exact', head: true })
     .eq('category', category);
@@ -65,7 +49,7 @@ function formatTime(d) {
   return d.toLocaleTimeString('en-US');
 }
 
-// Map DB rows (snake_case) -> API shape (PascalCase), unchanged from the old xlsx version
+// Map Excel worksheet rows to the API shape used by the frontend.
 const mapProduct    = p => ({ SKU: p.sku, Name: p.name, Category: p.category, Price: Number(p.price), Stock: Number(p.stock), MinStock: Number(p.min_stock) });
 const mapRestock    = r => ({ Date: r.date, Time: r.time, SKU: r.sku, Name: r.name, Category: r.category, QtyAdded: Number(r.qty_added), StockBefore: Number(r.stock_before), StockAfter: Number(r.stock_after), Price: Number(r.price) });
 const mapPriceLog   = r => ({ Date: r.date, Time: r.time, SKU: r.sku, Name: r.name, OldPrice: Number(r.old_price), NewPrice: Number(r.new_price), ChangedBy: r.changed_by });
@@ -77,7 +61,7 @@ const mapSaleItem   = r => ({ TransactionID: r.transaction_id, Date: r.date, Tim
 // ─────────────────────────────────────────────────────
 app.get('/products', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('products').select('*').order('sku');
+    const { data, error } = await localDb.from('products').select('*').order('sku');
     if (error) throw error;
     res.json(data.map(mapProduct));
   } catch (err) {
@@ -100,7 +84,7 @@ app.post('/add-product', async (req, res) => {
     const dateStr = formatDate(now);
     const timeStr = formatTime(now);
 
-    const { data: matches, error: findErr } = await supabase
+    const { data: matches, error: findErr } = await localDb
       .from('products').select('*').ilike('name', name);
     if (findErr) throw findErr;
     const existing = matches && matches[0];
@@ -113,7 +97,7 @@ app.post('/add-product', async (req, res) => {
       const newStock = oldStock + Number(stock);
       const newPrice = Number(price);
 
-      const { error: updErr } = await supabase
+      const { error: updErr } = await localDb
         .from('products')
         .update({ stock: newStock, price: newPrice, updated_at: now.toISOString() })
         .eq('sku', existing.sku);
@@ -121,14 +105,14 @@ app.post('/add-product', async (req, res) => {
 
       message = `Restocked "${name}". New stock: ${newStock}`;
 
-      const { error: restockErr } = await supabase.from('restock_history').insert({
+      const { error: restockErr } = await localDb.from('restock_history').insert({
         date: dateStr, time: timeStr, sku: existing.sku, name, category,
         qty_added: Number(stock), stock_before: oldStock, stock_after: newStock, price: newPrice
       });
       if (restockErr) throw restockErr;
 
       if (newPrice !== oldPrice) {
-        const { error: priceErr } = await supabase.from('price_change_log').insert({
+        const { error: priceErr } = await localDb.from('price_change_log').insert({
           date: dateStr, time: timeStr, sku: existing.sku, name,
           old_price: oldPrice, new_price: newPrice, changed_by: 'admin'
         });
@@ -137,21 +121,21 @@ app.post('/add-product', async (req, res) => {
     } else {
       const sku = await generateSKU(category);
 
-      const { error: insErr } = await supabase.from('products').insert({
+      const { error: insErr } = await localDb.from('products').insert({
         sku, name, category, price: Number(price), stock: Number(stock), min_stock: 5
       });
       if (insErr) throw insErr;
 
       message = `Added new product "${name}" (${sku})`;
 
-      const { error: restockErr } = await supabase.from('restock_history').insert({
+      const { error: restockErr } = await localDb.from('restock_history').insert({
         date: dateStr, time: timeStr, sku, name, category,
         qty_added: Number(stock), stock_before: 0, stock_after: Number(stock), price: Number(price)
       });
       if (restockErr) throw restockErr;
     }
 
-    const { data: products, error: listErr } = await supabase.from('products').select('*').order('sku');
+    const { data: products, error: listErr } = await localDb.from('products').select('*').order('sku');
     if (listErr) throw listErr;
 
     res.json({ message, products: products.map(mapProduct) });
@@ -167,16 +151,16 @@ app.post('/delete-product', async (req, res) => {
   try {
     const { sku } = req.body;
 
-    const { data: existing, error: findErr } = await supabase.from('products').select('sku').eq('sku', sku);
+    const { data: existing, error: findErr } = await localDb.from('products').select('sku').eq('sku', sku);
     if (findErr) throw findErr;
     if (!existing || existing.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    const { error: delErr } = await supabase.from('products').delete().eq('sku', sku);
+    const { error: delErr } = await localDb.from('products').delete().eq('sku', sku);
     if (delErr) throw delErr;
 
-    const { data: products, error: listErr } = await supabase.from('products').select('*').order('sku');
+    const { data: products, error: listErr } = await localDb.from('products').select('*').order('sku');
     if (listErr) throw listErr;
 
     res.json({ message: `Deleted product ${sku}`, products: products.map(mapProduct) });
@@ -197,7 +181,7 @@ app.post('/checkout', async (req, res) => {
     }
 
     const skus = cart.map(i => i.sku);
-    const { data: products, error: prodErr } = await supabase.from('products').select('*').in('sku', skus);
+    const { data: products, error: prodErr } = await localDb.from('products').select('*').in('sku', skus);
     if (prodErr) throw prodErr;
 
     const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
@@ -215,7 +199,7 @@ app.post('/checkout', async (req, res) => {
     for (const item of cart) {
       const p = products.find(x => x.sku === item.sku);
       const newStock = Number(p.stock) - item.qty;
-      const { error: updErr } = await supabase.from('products').update({ stock: newStock }).eq('sku', item.sku);
+      const { error: updErr } = await localDb.from('products').update({ stock: newStock }).eq('sku', item.sku);
       if (updErr) throw updErr;
     }
 
@@ -225,7 +209,7 @@ app.post('/checkout', async (req, res) => {
     const timeStr   = formatTime(now);
     const itemCount = cart.reduce((s, i) => s + i.qty, 0);
 
-    const { error: summErr } = await supabase.from('sales_summary').insert({
+    const { error: summErr } = await localDb.from('sales_summary').insert({
       transaction_id: txID, date: dateStr, time: timeStr, cashier: cashier || 'cashier',
       total_amount: total, item_count: itemCount, cash, change
     });
@@ -236,7 +220,7 @@ app.post('/checkout', async (req, res) => {
       product_name: item.name, sku: item.sku, category: item.category,
       quantity: item.qty, unit_price: item.price, subtotal: item.price * item.qty, total_amount: total
     }));
-    const { error: salesErr } = await supabase.from('sales').insert(salesRows);
+    const { error: salesErr } = await localDb.from('sales').insert(salesRows);
     if (salesErr) throw salesErr;
 
     res.json({
@@ -257,7 +241,7 @@ app.get('/sales', async (req, res) => {
   try {
     const { date } = req.query;
 
-    let query = supabase.from('sales_summary').select('*').order('created_at', { ascending: false });
+    let query = localDb.from('sales_summary').select('*').order('created_at', { ascending: false });
     if (date) {
       const [y, m, d] = date.split('-');
       query = query.eq('date', `${m}/${d}/${y}`);
@@ -268,7 +252,7 @@ app.get('/sales', async (req, res) => {
     const txIDs = summRows.map(r => r.transaction_id);
     let salesRows = [];
     if (txIDs.length) {
-      const { data, error } = await supabase.from('sales').select('*').in('transaction_id', txIDs);
+      const { data, error } = await localDb.from('sales').select('*').in('transaction_id', txIDs);
       if (error) throw error;
       salesRows = data;
     }
@@ -294,7 +278,7 @@ app.get('/sales', async (req, res) => {
 // ─────────────────────────────────────────────────────
 app.get('/inventory-dashboard', async (req, res) => {
   try {
-    const { data: products, error } = await supabase.from('products').select('*');
+    const { data: products, error } = await localDb.from('products').select('*');
     if (error) throw error;
 
     const totalItems      = products.length;
@@ -330,7 +314,7 @@ app.get('/inventory-dashboard', async (req, res) => {
 // ─────────────────────────────────────────────────────
 app.get('/restock-history', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('restock_history').select('*').order('id', { ascending: false });
+    const { data, error } = await localDb.from('restock_history').select('*').order('id', { ascending: false });
     if (error) throw error;
     res.json(data.map(mapRestock));
   } catch (err) {
@@ -344,7 +328,7 @@ app.get('/restock-history', async (req, res) => {
 app.get('/best-sellers', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
-    const { data: salesRows, error } = await supabase.from('sales').select('*');
+    const { data: salesRows, error } = await localDb.from('sales').select('*');
     if (error) throw error;
 
     const totals = {};
@@ -369,7 +353,7 @@ app.get('/best-sellers', async (req, res) => {
 // ─────────────────────────────────────────────────────
 app.get('/export-inventory', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('products').select('sku,name,category,price,stock').order('sku');
+    const { data, error } = await localDb.from('products').select('sku,name,category,price,stock').order('sku');
     if (error) throw error;
     res.json(data.map(p => ({ SKU: p.sku, Name: p.name, Category: p.category, Price: Number(p.price), Stock: Number(p.stock) })));
   } catch (err) {
@@ -382,7 +366,7 @@ app.get('/export-inventory', async (req, res) => {
 // ─────────────────────────────────────────────────────
 app.get('/price-change-log', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('price_change_log').select('*').order('id', { ascending: false });
+    const { data, error } = await localDb.from('price_change_log').select('*').order('id', { ascending: false });
     if (error) throw error;
     res.json(data.map(mapPriceLog));
   } catch (err) {
@@ -398,7 +382,7 @@ app.post('/set-min-stock', async (req, res) => {
     const { sku, minStock } = req.body;
     if (!sku || minStock == null) return res.status(400).json({ error: 'Missing sku or minStock' });
 
-    const { data, error } = await supabase
+    const { data, error } = await localDb
       .from('products')
       .update({ min_stock: Number(minStock) })
       .eq('sku', sku)
@@ -421,7 +405,7 @@ app.post('/adjust-stock', async (req, res) => {
     const { sku, adjustment, reason } = req.body;
     if (!sku || adjustment == null) return res.status(400).json({ error: 'Missing fields' });
 
-    const { data: matches, error: findErr } = await supabase.from('products').select('*').eq('sku', sku);
+    const { data: matches, error: findErr } = await localDb.from('products').select('*').eq('sku', sku);
     if (findErr) throw findErr;
     const p = matches && matches[0];
     if (!p) return res.status(404).json({ error: 'Product not found' });
@@ -429,11 +413,11 @@ app.post('/adjust-stock', async (req, res) => {
     const before = Number(p.stock);
     const after  = Math.max(0, before + Number(adjustment));
 
-    const { error: updErr } = await supabase.from('products').update({ stock: after }).eq('sku', sku);
+    const { error: updErr } = await localDb.from('products').update({ stock: after }).eq('sku', sku);
     if (updErr) throw updErr;
 
     const now = new Date();
-    const { error: logErr } = await supabase.from('stock_adjustments').insert({
+    const { error: logErr } = await localDb.from('stock_adjustments').insert({
       date: formatDate(now), time: formatTime(now), sku, name: p.name,
       adjustment: Number(adjustment), stock_before: before, stock_after: after,
       reason: reason || 'Manual adjustment'
@@ -451,7 +435,7 @@ app.post('/adjust-stock', async (req, res) => {
 // ─────────────────────────────────────────────────────
 app.get('/stock-adjustments', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('stock_adjustments').select('*').order('id', { ascending: false });
+    const { data, error } = await localDb.from('stock_adjustments').select('*').order('id', { ascending: false });
     if (error) throw error;
     res.json(data.map(mapAdjustment));
   } catch (err) {
@@ -464,5 +448,5 @@ app.get('/stock-adjustments', async (req, res) => {
 // ─────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n✅  Manna's Tinadhan POS running at http://localhost:${PORT}`);
-  console.log(`📊  Database: Supabase (${process.env.SUPABASE_URL})\n`);
+  console.log(`📊  Database: Microsoft Excel (${localDb.getPath()})\n`);
 });
