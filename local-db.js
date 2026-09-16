@@ -132,75 +132,75 @@ class LocalQuery {
   async execute() {
     const run = async () => {
       try {
-      const { database, workbook } = readDatabase();
-      const rows = database[this.table];
-      if (!rows) throw new Error(`Unknown table: ${this.table}`);
+        const { database, workbook } = readDatabase();
+        const rows = database[this.table];
+        if (!rows) throw new Error(`Unknown table: ${this.table}`);
 
-      if (this.operation === 'select') {
-        let result = rows.filter(row => this.filters.every(filter => filter(row)));
-        if (this.sorting) {
-          const direction = this.sorting.ascending ? 1 : -1;
-          result = result.slice().sort((a, b) => {
-            if (a[this.sorting.column] === b[this.sorting.column]) return 0;
-            return a[this.sorting.column] > b[this.sorting.column] ? direction : -direction;
-          });
-        }
-        if (this.headOnly) return { data: null, count: result.length, error: null };
-        if (this.columns !== '*') {
-          const columns = this.columns.split(',').map(column => column.trim());
-          result = result.map(row => Object.fromEntries(columns.map(column => [column, row[column]])));
-        }
-        return { data: result, count: result.length, error: null };
-      }
-
-      const matches = rows.filter(row => this.filters.every(filter => filter(row)));
-
-      if (this.operation === 'insert') {
-        let id = nextId(rows);
-        const inserted = this.payload.map(row => ({
-          ...row,
-          ...(this.table === 'products' ? {} : { id: row.id || id++ }),
-          created_at: row.created_at || new Date().toISOString()
-        }));
-        rows.push(...inserted);
-        saveDatabase(database, workbook);
-        return { data: this.returnRows ? inserted : null, error: null };
-      }
-
-      if (this.operation === 'upsert') {
-        const inserted = [];
-        this.payload.forEach(row => {
-          const existing = this.conflictColumn
-            ? rows.find(item => item[this.conflictColumn] === row[this.conflictColumn])
-            : null;
-          if (existing) {
-            Object.assign(existing, row);
-            inserted.push(existing);
-          } else {
-            const newRow = {
-              ...row,
-              ...(this.table === 'products' ? {} : { id: nextId(rows) }),
-              created_at: row.created_at || new Date().toISOString()
-            };
-            rows.push(newRow);
-            inserted.push(newRow);
+        if (this.operation === 'select') {
+          let result = rows.filter(row => this.filters.every(filter => filter(row)));
+          if (this.sorting) {
+            const direction = this.sorting.ascending ? 1 : -1;
+            result = result.slice().sort((a, b) => {
+              if (a[this.sorting.column] === b[this.sorting.column]) return 0;
+              return a[this.sorting.column] > b[this.sorting.column] ? direction : -direction;
+            });
           }
-        });
-        saveDatabase(database, workbook);
-        return { data: this.returnRows ? inserted : null, error: null };
-      }
+          if (this.headOnly) return { data: null, count: result.length, error: null };
+          if (this.columns !== '*') {
+            const columns = this.columns.split(',').map(column => column.trim());
+            result = result.map(row => Object.fromEntries(columns.map(column => [column, row[column]])));
+          }
+          return { data: result, count: result.length, error: null };
+        }
 
-      if (this.operation === 'update') {
-        matches.forEach(row => Object.assign(row, this.payload));
-        saveDatabase(database, workbook);
-        return { data: this.returnRows ? matches : null, error: null };
-      }
+        const matches = rows.filter(row => this.filters.every(filter => filter(row)));
 
-      if (this.operation === 'delete') {
-        database[this.table] = rows.filter(row => !matches.includes(row));
-        saveDatabase(database, workbook);
-        return { data: null, error: null };
-      }
+        if (this.operation === 'insert') {
+          let id = nextId(rows);
+          const inserted = this.payload.map(row => ({
+            ...row,
+            ...(this.table === 'products' ? {} : { id: row.id || id++ }),
+            created_at: row.created_at || new Date().toISOString()
+          }));
+          rows.push(...inserted);
+          saveDatabase(database, workbook);
+          return { data: this.returnRows ? inserted : null, error: null };
+        }
+
+        if (this.operation === 'upsert') {
+          const inserted = [];
+          this.payload.forEach(row => {
+            const existing = this.conflictColumn
+              ? rows.find(item => item[this.conflictColumn] === row[this.conflictColumn])
+              : null;
+            if (existing) {
+              Object.assign(existing, row);
+              inserted.push(existing);
+            } else {
+              const newRow = {
+                ...row,
+                ...(this.table === 'products' ? {} : { id: nextId(rows) }),
+                created_at: row.created_at || new Date().toISOString()
+              };
+              rows.push(newRow);
+              inserted.push(newRow);
+            }
+          });
+          saveDatabase(database, workbook);
+          return { data: this.returnRows ? inserted : null, error: null };
+        }
+
+        if (this.operation === 'update') {
+          matches.forEach(row => Object.assign(row, this.payload));
+          saveDatabase(database, workbook);
+          return { data: this.returnRows ? matches : null, error: null };
+        }
+
+        if (this.operation === 'delete') {
+          database[this.table] = rows.filter(row => !matches.includes(row));
+          saveDatabase(database, workbook);
+          return { data: null, error: null };
+        }
       } catch (error) {
         return { data: null, error };
       }

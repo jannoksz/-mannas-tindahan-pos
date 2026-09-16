@@ -146,6 +146,25 @@ h2{ margin-bottom:12px; }
   border-radius:8px; margin-top:5px; font-size:13px;
 }
 
+/* ── TREND CHART ─────────────────────────────── */
+.trend-chart{
+  display:flex; align-items:flex-end; gap:3px;
+  height:150px; padding:8px; background:#f9fafb;
+  border:1px solid var(--border); border-radius:12px; overflow-x:auto;
+}
+.trend-col{
+  flex:1; min-width:16px; display:flex; flex-direction:column;
+  align-items:center; justify-content:flex-end; height:100%;
+}
+.trend-bar{
+  width:100%; background:var(--primary); border-radius:4px 4px 0 0;
+  min-height:2px; transition:height .25s;
+}
+.trend-bar.empty{ background:#e5e7eb; }
+.trend-label{ font-size:9px; color:#6b7280; margin-top:4px; white-space:nowrap; }
+.delta-up  { color:#bbf7d0; }
+.delta-down{ color:#fecaca; }
+
 /* ── AUTOCOMPLETE ────────────────────────────── */
 .autocomplete-wrap{ position:relative; }
 .autocomplete-wrap input{ margin-bottom:0; }
@@ -442,10 +461,22 @@ input[type=checkbox]{ display:none; }
   <!-- ── TAB: SALES ── -->
   <div class="tab-content active" id="tabSales">
     <div class="date-picker-section">
-      <label>📅 View Sales by Date</label>
+      <label>📅 View Sales by Period</label>
+      <div class="date-row" style="margin-bottom:8px;">
+        <select id="salesPeriod" style="margin-bottom:0;flex:1;">
+          <option value="daily" selected>Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      </div>
       <div class="date-row">
         <input type="date" id="salesDatePicker">
         <button class="view-btn" onclick="viewSalesByDate()">View</button>
+      </div>
+      <div style="font-size:12px;color:#1e3a8a;opacity:.75;margin-top:6px;">
+        The selected date picks which day / week / month / quarter / year to summarise.
       </div>
     </div>
 
@@ -455,6 +486,7 @@ input[type=checkbox]{ display:none; }
         <div class="result-total">₱<span id="resultTotal">0</span></div>
         <div class="result-count"><span id="resultCount">0</span> transaction(s)</div>
       </div>
+
       <div class="analytics-grid">
         <div class="card green">
           <div style="font-size:12px;">Total Revenue</div>
@@ -464,15 +496,34 @@ input[type=checkbox]{ display:none; }
           <div style="font-size:12px;">Avg. per Transaction</div>
           <h2>₱<span id="resultAvg">0</span></h2>
         </div>
+        <div class="card purple">
+          <div style="font-size:12px;">Items Sold</div>
+          <h2><span id="resultItems">0</span></h2>
+        </div>
+        <div class="card teal">
+          <div style="font-size:12px;">vs. previous</div>
+          <h2><span id="resultDelta">—</span></h2>
+        </div>
       </div>
+
+      <div id="trendSection">
+        <h3 style="margin:14px 0 8px;">📈 Trend</h3>
+        <div class="trend-chart" id="trendChart"></div>
+      </div>
+
+      <div id="topProductsSection"></div>
+
       <div id="inventoryStats"></div>
-      <h3 style="margin-top:15px;margin-bottom:8px;">Transactions on this day</h3>
-      <div id="history"></div>
+
+      <div id="historySection">
+        <h3 style="margin-top:15px;margin-bottom:8px;">Transactions on this day</h3>
+        <div id="history"></div>
+      </div>
     </div>
 
     <div id="analyticsPlaceholder" class="no-data-msg">
       <div class="icon">📊</div>
-      <div>Select a date above to view sales data for that day.</div>
+      <div>Select a period and date above to view sales data.</div>
     </div>
   </div>
 
@@ -1003,38 +1054,52 @@ function printReceiptAction() {
   window.print();
 }
 
-/* ── ANALYTICS — SALES ──────────────────────────── */
+/* ── ANALYTICS — SALES BY PERIOD ────────────────── */
 async function viewSalesByDate() {
   const dateVal = $('salesDatePicker').value;
+  const period  = $('salesPeriod').value;
   if (!dateVal) return alert('Please select a date.');
 
   try {
-    const txns = await apiGet(`/sales?date=${dateVal}`);
-    const displayDate = new Date(dateVal + 'T12:00:00')
-      .toLocaleDateString('en-PH', { year:'numeric', month:'long', day:'numeric' });
+    const s = await apiGet(`/sales-summary?period=${period}&date=${dateVal}`);
 
-    $('resultDateLabel').innerText = displayDate;
-    const totalRevenue = txns.reduce((s, t) => s + Number(t.TotalAmount), 0);
-    const count        = txns.length;
-    const avg          = count > 0 ? totalRevenue / count : 0;
+    $('resultDateLabel').innerText = s.label;
+    $('resultTotal').innerText     = fmt(s.totals.revenue);
+    $('resultCount').innerText     = s.totals.transactions;
+    $('resultRevenue').innerText   = fmt(s.totals.revenue);
+    $('resultAvg').innerText       = fmt(s.totals.avgBasket);
+    $('resultItems').innerText     = s.totals.itemsSold;
 
-    $('resultTotal').innerText   = fmt(totalRevenue);
-    $('resultCount').innerText   = count;
-    $('resultRevenue').innerText = fmt(totalRevenue);
-    $('resultAvg').innerText     = fmt(avg);
-
-    if (!txns.length) {
-      $('history').innerHTML = `<div class="no-data-msg"><div class="icon">🗒️</div><div>No transactions recorded on this date.</div></div>`;
+    const pct   = s.previous.changePct;
+    const delta = $('resultDelta');
+    if (pct === null) {
+      delta.innerText = s.totals.revenue > 0 ? 'New' : '—';
+      delta.className = '';
     } else {
-      $('history').innerHTML = [...txns].reverse().map(t => `
-        <div class="item">
-          <b>${t.TransactionID}</b>
-          <div style="font-size:13px;color:#6b7280;">${t.Date} ${t.Time} — ${t.Cashier}</div>
-          <h3>₱${fmt(t.TotalAmount)}</h3>
-          <div style="margin-top:4px;font-size:12px;color:#6b7280;">
-            ${(t.items || []).map(i => `${i.ProductName} ×${i.Qty}`).join(', ')}
-          </div>
-        </div>`).join('');
+      delta.innerText = `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%`;
+      delta.className = pct >= 0 ? 'delta-up' : 'delta-down';
+    }
+    delta.parentElement.title = `${s.previous.label}: ₱${fmt(s.previous.revenue)}`;
+
+    renderTrendChart(s.buckets);
+    renderTopProducts(s.topProducts);
+
+    // The per-transaction list only makes sense for a single day.
+    const daily = period === 'daily';
+    $('historySection').style.display = daily ? 'block' : 'none';
+    if (daily) {
+      const txns = await apiGet(`/sales?date=${dateVal}`);
+      $('history').innerHTML = txns.length
+        ? [...txns].reverse().map(t => `
+          <div class="item">
+            <b>${t.TransactionID}</b>
+            <div style="font-size:13px;color:#6b7280;">${t.Date} ${t.Time} — ${t.Cashier}</div>
+            <h3>₱${fmt(t.TotalAmount)}</h3>
+            <div style="margin-top:4px;font-size:12px;color:#6b7280;">
+              ${(t.items || []).map(i => `${i.ProductName} ×${i.Quantity}`).join(', ')}
+            </div>
+          </div>`).join('')
+        : `<div class="no-data-msg"><div class="icon">🗒️</div><div>No transactions recorded on this date.</div></div>`;
     }
 
     updateInventoryStats();
@@ -1043,6 +1108,39 @@ async function viewSalesByDate() {
   } catch (err) {
     showToast('❌ Failed to load sales: ' + err.message, true);
   }
+}
+
+function renderTrendChart(buckets) {
+  if (!buckets || !buckets.length) { $('trendChart').innerHTML = ''; return; }
+  const max = Math.max(...buckets.map(b => b.revenue), 0);
+  $('trendChart').innerHTML = buckets.map(b => {
+    const h = max > 0 ? Math.max(2, (b.revenue / max) * 100) : 2;
+    return `
+      <div class="trend-col" title="${b.label}: ₱${fmt(b.revenue)} · ${b.transactions} txn">
+        <div class="trend-bar ${b.revenue ? '' : 'empty'}" style="height:${h}%;"></div>
+        <div class="trend-label">${b.label}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderTopProducts(items) {
+  if (!items || !items.length) { $('topProductsSection').innerHTML = ''; return; }
+  $('topProductsSection').innerHTML = `
+    <h3 style="margin:14px 0 8px;">🏆 Top Sellers This Period</h3>
+    ${items.map((p, i) => `
+      <div class="item" style="margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <span style="font-weight:bold;color:#f59e0b;">#${i + 1}</span>
+            <b style="margin-left:6px;">${p.name}</b>
+            <div style="font-size:12px;color:#9ca3af;">${p.category}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:bold;">${p.qtyTotal} sold</div>
+            <div style="font-size:13px;color:#16a34a;">₱${fmt(p.revenueTotal)}</div>
+          </div>
+        </div>
+      </div>`).join('')}`;
 }
 
 function updateInventoryStats() {

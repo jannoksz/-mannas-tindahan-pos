@@ -49,6 +49,121 @@ function formatTime(d) {
   return d.toLocaleTimeString('en-US');
 }
 
+// ─────────────────────────────────────────────────────
+//  PERIOD HELPERS  (for /sales-summary)
+// ─────────────────────────────────────────────────────
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Sheet dates are stored as MM/DD/YYYY strings.
+function parseSheetDate(s) {
+  const [mm, dd, yy] = String(s).split('/').map(Number);
+  if (!mm || !dd || !yy) return null;
+  return new Date(yy, mm - 1, dd);
+}
+
+// Times are locale strings like "1:05:33 PM" (or 24h on some systems).
+function parseHour(t) {
+  const m = String(t).match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?/i);
+  if (!m) return 0;
+  let h = Number(m[1]);
+  const ap = (m[3] || '').toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return Math.min(23, Math.max(0, h));
+}
+
+function startOfWeek(d) {               // Monday-based
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x;
+}
+
+function periodRange(period, anchor) {
+  const y = anchor.getFullYear(), m = anchor.getMonth(), d = anchor.getDate();
+  switch (period) {
+    case 'daily':     return [new Date(y, m, d), new Date(y, m, d + 1)];
+    case 'weekly': {
+      const s = startOfWeek(anchor);
+      return [s, new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7)];
+    }
+    case 'monthly':   return [new Date(y, m, 1), new Date(y, m + 1, 1)];
+    case 'quarterly': {
+      const q = Math.floor(m / 3) * 3;
+      return [new Date(y, q, 1), new Date(y, q + 3, 1)];
+    }
+    case 'yearly':    return [new Date(y, 0, 1), new Date(y + 1, 0, 1)];
+    default: throw new Error(`Invalid period: ${period}`);
+  }
+}
+
+function previousAnchor(period, anchor) {
+  const y = anchor.getFullYear(), m = anchor.getMonth(), d = anchor.getDate();
+  switch (period) {
+    case 'daily':     return new Date(y, m, d - 1);
+    case 'weekly':    return new Date(y, m, d - 7);
+    case 'monthly':   return new Date(y, m - 1, 1);
+    case 'quarterly': return new Date(y, m - 3, 1);
+    case 'yearly':    return new Date(y - 1, 0, 1);
+    default: throw new Error(`Invalid period: ${period}`);
+  }
+}
+
+function periodLabel(period, anchor) {
+  const y = anchor.getFullYear(), m = anchor.getMonth();
+  switch (period) {
+    case 'daily':     return `${MONTHS[m]} ${anchor.getDate()}, ${y}`;
+    case 'weekly': {
+      const [s, e] = periodRange('weekly', anchor);
+      const last = new Date(e.getFullYear(), e.getMonth(), e.getDate() - 1);
+      return `${MONTHS[s.getMonth()]} ${s.getDate()} – ${MONTHS[last.getMonth()]} ${last.getDate()}, ${last.getFullYear()}`;
+    }
+    case 'monthly':   return `${MONTHS[m]} ${y}`;
+    case 'quarterly': return `Q${Math.floor(m / 3) + 1} ${y}`;
+    case 'yearly':    return `${y}`;
+    default: throw new Error(`Invalid period: ${period}`);
+  }
+}
+
+// Which sub-buckets the trend chart uses for each period.
+function bucketsFor(period, anchor) {
+  const [start, end] = periodRange(period, anchor);
+  const m = anchor.getMonth();
+
+  if (period === 'daily') {
+    return {
+      keys: Array.from({ length: 24 }, (_, h) => ({
+        key: String(h),
+        label: `${((h % 12) || 12)}${h < 12 ? 'am' : 'pm'}`
+      })),
+      keyOf: (date, time) => String(parseHour(time))
+    };
+  }
+
+  if (period === 'weekly' || period === 'monthly') {
+    const keys = [];
+    for (let t = new Date(start); t < end; t.setDate(t.getDate() + 1)) {
+      keys.push({
+        key: `${t.getMonth()}-${t.getDate()}`,
+        label: period === 'weekly'
+          ? ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][(t.getDay() + 6) % 7]
+          : String(t.getDate())
+      });
+    }
+    return { keys, keyOf: date => `${date.getMonth()}-${date.getDate()}` };
+  }
+
+  // quarterly / yearly → by month
+  const firstMonth = period === 'quarterly' ? Math.floor(m / 3) * 3 : 0;
+  const count      = period === 'quarterly' ? 3 : 12;
+  return {
+    keys: Array.from({ length: count }, (_, i) => ({
+      key: String(firstMonth + i),
+      label: MONTHS[firstMonth + i]
+    })),
+    keyOf: date => String(date.getMonth())
+  };
+}
+
 // Map Excel worksheet rows to the API shape used by the frontend.
 const mapProduct    = p => ({ SKU: p.sku, Name: p.name, Category: p.category, Price: Number(p.price), Stock: Number(p.stock), MinStock: Number(p.min_stock) });
 const mapRestock    = r => ({ Date: r.date, Time: r.time, SKU: r.sku, Name: r.name, Category: r.category, QtyAdded: Number(r.qty_added), StockBefore: Number(r.stock_before), StockAfter: Number(r.stock_after), Price: Number(r.price) });
@@ -268,6 +383,97 @@ app.get('/sales', async (req, res) => {
     }));
 
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────
+//  GET /sales-summary
+//    ?period=daily|weekly|monthly|quarterly|yearly
+//    &date=YYYY-MM-DD   (the anchor date inside the period)
+// ─────────────────────────────────────────────────────
+app.get('/sales-summary', async (req, res) => {
+  try {
+    const period = String(req.query.period || 'daily').toLowerCase();
+    if (!['daily', 'weekly', 'monthly', 'quarterly', 'yearly'].includes(period)) {
+      return res.status(400).json({ error: `Invalid period: ${period}` });
+    }
+
+    let anchor = new Date();
+    if (req.query.date) {
+      const [y, m, d] = String(req.query.date).split('-').map(Number);
+      if (!y || !m || !d) return res.status(400).json({ error: 'Invalid date (expected YYYY-MM-DD)' });
+      anchor = new Date(y, m - 1, d);
+    }
+
+    const { data: allSumm, error: summErr } = await localDb.from('sales_summary').select('*');
+    if (summErr) throw summErr;
+
+    const inRange = (rows, start, end) => rows.filter(r => {
+      const d = parseSheetDate(r.date);
+      return d && d >= start && d < end;
+    });
+
+    const [start, end] = periodRange(period, anchor);
+    const rows         = inRange(allSumm, start, end);
+
+    const revenue      = rows.reduce((s, r) => s + Number(r.total_amount || 0), 0);
+    const transactions = rows.length;
+    const itemsSold    = rows.reduce((s, r) => s + Number(r.item_count || 0), 0);
+    const avgBasket    = transactions ? revenue / transactions : 0;
+
+    // Previous comparable period, for the change indicator.
+    const prevAnchor     = previousAnchor(period, anchor);
+    const [pStart, pEnd] = periodRange(period, prevAnchor);
+    const prevRows       = inRange(allSumm, pStart, pEnd);
+    const prevRevenue    = prevRows.reduce((s, r) => s + Number(r.total_amount || 0), 0);
+
+    // Trend buckets within the period.
+    const { keys, keyOf } = bucketsFor(period, anchor);
+    const tally = Object.fromEntries(keys.map(k => [k.key, { revenue: 0, transactions: 0, itemsSold: 0 }]));
+    for (const r of rows) {
+      const d = parseSheetDate(r.date);
+      const k = keyOf(d, r.time);
+      if (!tally[k]) continue;
+      tally[k].revenue      += Number(r.total_amount || 0);
+      tally[k].transactions += 1;
+      tally[k].itemsSold    += Number(r.item_count || 0);
+    }
+    const buckets = keys.map(k => ({ label: k.label, ...tally[k.key] }));
+
+    // Top sellers for the period.
+    const txIDs = new Set(rows.map(r => r.transaction_id));
+    let topProducts = [];
+    if (txIDs.size) {
+      const { data: saleRows, error: salesErr } = await localDb.from('sales').select('*');
+      if (salesErr) throw salesErr;
+      const totals = {};
+      for (const r of saleRows) {
+        if (!txIDs.has(r.transaction_id)) continue;
+        if (!totals[r.sku]) {
+          totals[r.sku] = { sku: r.sku, name: r.product_name, category: r.category, qtyTotal: 0, revenueTotal: 0 };
+        }
+        totals[r.sku].qtyTotal     += Number(r.quantity || 0);
+        totals[r.sku].revenueTotal += Number(r.subtotal || 0);
+      }
+      topProducts = Object.values(totals).sort((a, b) => b.qtyTotal - a.qtyTotal).slice(0, 5);
+    }
+
+    res.json({
+      period,
+      label: periodLabel(period, anchor),
+      start: start.toISOString(),
+      end:   end.toISOString(),
+      totals: { revenue, transactions, itemsSold, avgBasket },
+      previous: {
+        label: periodLabel(period, prevAnchor),
+        revenue: prevRevenue,
+        changePct: prevRevenue ? ((revenue - prevRevenue) / prevRevenue) * 100 : null
+      },
+      buckets,
+      topProducts
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
