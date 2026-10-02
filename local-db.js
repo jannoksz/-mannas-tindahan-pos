@@ -13,7 +13,7 @@ const tableSheets = {
 };
 
 const columns = {
-  products: { sku: 'SKU', name: 'Name', category: 'Category', price: 'Price', stock: 'Stock', min_stock: 'MinStock', updated_at: 'UpdatedAt' },
+  products: { sku: 'SKU', name: 'Name', category: 'Category', price: 'Price', stock: 'Stock', min_stock: 'MinStock', date: 'Date', time: 'Time', updated_at: 'UpdatedAt' },
   sales: { id: 'ID', transaction_id: 'TransactionID', date: 'Date', time: 'Time', cashier: 'Cashier', product_name: 'ProductName', sku: 'SKU', category: 'Category', quantity: 'Quantity', unit_price: 'UnitPrice', subtotal: 'Subtotal', total_amount: 'TotalAmount', created_at: 'CreatedAt' },
   sales_summary: { id: 'ID', transaction_id: 'TransactionID', date: 'Date', time: 'Time', cashier: 'Cashier', total_amount: 'TotalAmount', item_count: 'ItemCount', cash: 'Cash', change: 'Change', created_at: 'CreatedAt' },
   restock_history: { id: 'ID', date: 'Date', time: 'Time', sku: 'SKU', name: 'Name', category: 'Category', qty_added: 'QtyAdded', stock_before: 'StockBefore', stock_after: 'StockAfter', price: 'Price', created_at: 'CreatedAt' },

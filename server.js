@@ -165,11 +165,28 @@ function bucketsFor(period, anchor) {
 }
 
 // Map Excel worksheet rows to the API shape used by the frontend.
-const mapProduct    = p => ({ SKU: p.sku, Name: p.name, Category: p.category, Price: Number(p.price), Stock: Number(p.stock), MinStock: Number(p.min_stock) });
+const mapProduct    = p => ({ SKU: p.sku, Name: p.name, Category: p.category, Price: Number(p.price), Stock: Number(p.stock), MinStock: Number(p.min_stock), Date: p.date, Time: p.time });
 const mapRestock    = r => ({ Date: r.date, Time: r.time, SKU: r.sku, Name: r.name, Category: r.category, QtyAdded: Number(r.qty_added), StockBefore: Number(r.stock_before), StockAfter: Number(r.stock_after), Price: Number(r.price) });
 const mapPriceLog   = r => ({ Date: r.date, Time: r.time, SKU: r.sku, Name: r.name, OldPrice: Number(r.old_price), NewPrice: Number(r.new_price), ChangedBy: r.changed_by });
 const mapAdjustment = r => ({ Date: r.date, Time: r.time, SKU: r.sku, Name: r.name, Adjustment: Number(r.adjustment), StockBefore: Number(r.stock_before), StockAfter: Number(r.stock_after), Reason: r.reason });
 const mapSaleItem   = r => ({ TransactionID: r.transaction_id, Date: r.date, Time: r.time, Cashier: r.cashier, ProductName: r.product_name, SKU: r.sku, Category: r.category, Quantity: Number(r.quantity), UnitPrice: Number(r.unit_price), Subtotal: Number(r.subtotal), TotalAmount: Number(r.total_amount) });
+
+// ─────────────────────────────────────────────────────
+//  GET /offline-backup  (one-time device-local bootstrap)
+// ─────────────────────────────────────────────────────
+app.get('/offline-backup', async (req, res) => {
+  try {
+    const tables = ['products', 'sales', 'sales_summary', 'restock_history', 'price_change_log', 'stock_adjustments'];
+    const entries = await Promise.all(tables.map(async table => {
+      const { data, error } = await localDb.from(table).select('*');
+      if (error) throw error;
+      return [table, data];
+    }));
+    res.json(Object.fromEntries(entries));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─────────────────────────────────────────────────────
 //  GET /products
@@ -214,7 +231,7 @@ app.post('/add-product', async (req, res) => {
 
       const { error: updErr } = await localDb
         .from('products')
-        .update({ stock: newStock, price: newPrice, updated_at: now.toISOString() })
+        .update({ stock: newStock, price: newPrice, date: dateStr, time: timeStr, updated_at: now.toISOString() })
         .eq('sku', existing.sku);
       if (updErr) throw updErr;
 
@@ -237,7 +254,8 @@ app.post('/add-product', async (req, res) => {
       const sku = await generateSKU(category);
 
       const { error: insErr } = await localDb.from('products').insert({
-        sku, name, category, price: Number(price), stock: Number(stock), min_stock: 5
+        sku, name, category, price: Number(price), stock: Number(stock), min_stock: 5,
+        date: dateStr, time: timeStr, updated_at: now.toISOString()
       });
       if (insErr) throw insErr;
 

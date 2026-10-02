@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Manna's Tinadhan POS</title>
+<meta name="theme-color" content="#111827">
+<link rel="manifest" href="/manifest.webmanifest">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <style>
@@ -341,7 +343,7 @@ input[type=checkbox]{ display:none; }
       <div id="roleLabel">SYSTEM PANEL</div>
     </div>
     <div style="text-align:right;">
-      <div>🟢 Connected to Excel DB</div>
+      <div>🟢 Device-local storage</div>
       <div id="liveDate"></div>
     </div>
   </div>
@@ -584,6 +586,9 @@ input[type=checkbox]{ display:none; }
     <div class="export-row">
       <button class="export-btn btn-green" onclick="exportCSV()">⬇ Export CSV</button>
       <button class="export-btn btn-dark"  onclick="exportJSON()">⬇ Export JSON</button>
+      <button class="export-btn btn-dark" onclick="exportDeviceBackup()">⬇ Backup device data</button>
+      <button class="export-btn btn-dark" onclick="$('deviceBackupFile').click()">Import device backup</button>
+      <input id="deviceBackupFile" type="file" accept="application/json,.json" hidden onchange="importDeviceBackup(event)">
     </div>
     <div style="overflow-x:auto;">
       <table class="sort-table" id="sortTable">
@@ -664,9 +669,14 @@ input[type=checkbox]{ display:none; }
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
+<script src="/offline-store.js"></script>
 <script>
 /* ── CONFIG ─────────────────────────────────────── */
 const API = '';
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+}
 
 /* ── STATE ──────────────────────────────────────── */
 let products    = [];
@@ -704,20 +714,11 @@ function setBtnLoading(btnId, loading, label = '') {
 
 /* ── API CALLS ──────────────────────────────────── */
 async function apiGet(endpoint) {
-  const res = await fetch(API + endpoint);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return PosOfflineStore.get(API + endpoint);
 }
 
 async function apiPost(endpoint, body) {
-  const res = await fetch(API + endpoint, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body)
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Server error');
-  return data;
+  return PosOfflineStore.post(API + endpoint, body);
 }
 
 /* ── LOAD PRODUCTS ──────────────────────────────── */
@@ -1433,6 +1434,34 @@ function exportCSV() {
 function exportJSON() {
   if (!products.length) return alert('No products to export.');
   downloadFile(JSON.stringify(products, null, 2), 'inventory.json', 'application/json');
+}
+
+async function exportDeviceBackup() {
+  try {
+    const backup = await PosOfflineStore.exportBackup();
+    downloadFile(JSON.stringify(backup, null, 2), 'mannas-pos-device-backup.json', 'application/json');
+    showToast('Device backup exported.');
+  } catch (err) {
+    showToast('❌ ' + err.message, true);
+  }
+}
+
+async function importDeviceBackup(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!confirm('Importing replaces all products and history stored on this device. Continue?')) {
+    event.target.value = '';
+    return;
+  }
+  try {
+    await PosOfflineStore.importBackup(JSON.parse(await file.text()));
+    showToast('Device backup restored.');
+    await loadProducts();
+  } catch (err) {
+    showToast('❌ ' + err.message, true);
+  } finally {
+    event.target.value = '';
+  }
 }
 
 function downloadFile(content, filename, type) {

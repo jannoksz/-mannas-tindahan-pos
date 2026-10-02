@@ -1,8 +1,8 @@
 # 🛒 Manna's Tinadhan POS
 
-A lightweight, tablet-friendly Point of Sale system for small businesses. Built with vanilla HTML/CSS/JS on the frontend, Node.js + Express on the backend, and a local Microsoft Excel workbook database.
+A lightweight, tablet-friendly Point of Sale system for small businesses. Built with vanilla HTML/CSS/JS, Node.js + Express, and a local Microsoft Excel workbook for initial data.
 
-The application is designed to run on a local computer with Microsoft Excel as its database. The browser interface and the Node.js server should run on the same computer, or the server computer can be shared over a local network.
+The installable web app keeps its working inventory, sales, and logs in a separate IndexedDB database on each device. After the first load, sales and inventory edits work offline. The Node.js server can provide the initial workbook data, but it is not used for ongoing sales.
 
 ---
 
@@ -41,8 +41,8 @@ The application is designed to run on a local computer with Microsoft Excel as i
 | Layer    | Technology                        |
 |----------|-----------------------------------|
 | Frontend | HTML, CSS, Vanilla JavaScript     |
-| Backend  | Node.js, Express                  |
-| Database | Microsoft Excel workbook (`pos_database.xlsx`) |
+| Backend  | Node.js, Express (initial data import) |
+| Database | IndexedDB per device; Excel workbook for initial data |
 | Fonts    | Google Fonts — DM Sans, DM Mono  |
 
 ---
@@ -93,6 +93,14 @@ Go to **http://localhost:3000** in your browser or tablet. The server will displ
 ---
 
 ## 💾 Excel Database
+
+On first launch, the app tries to import the current workbook data from the local server. If launched without a connection, it starts with an empty local inventory instead. Once a device has local edits, those edits are kept on that device and a later server connection will not merge or replace them.
+
+Each installation has independent stock and sales. Data is not synchronized between devices. In the admin Table View, use **Backup device data** to export all local products and history, and **Import device backup** to restore that file on a device. Import replaces that device's current data, so export a backup first.
+
+The app shell is cached for offline launch. Service workers require a secure context: use `http://localhost:3000` on the Windows computer, or serve the app over HTTPS for browser installation on Android. Do not expose this current server to the public internet; its API has no authentication and the bootstrap endpoint returns the workbook's sales and inventory data.
+
+The workbook setup below applies to the initial server-side data source. Local device sales are stored in that device's browser storage, not written back to the workbook.
 
 `pos_database.xlsx` is the live database. The server reads the workbook when handling a request and writes changes back to the workbook after product changes, sales, restocking, price changes, and stock adjustments.
 
